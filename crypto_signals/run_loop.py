@@ -68,6 +68,29 @@ def process_symbol(opts: dict, symbol_cfg: dict, ha: HomeAssistantClient) -> Non
         },
     )
 
+    # Capteurs numériques séparés : nécessaires pour que les cartes Lovelace
+    # (history-graph, sensor card...) puissent tracer une courbe de tendance.
+    # L'état d'un capteur texte ("hold"/"buy"/"sell") n'est pas graphable,
+    # mais son historique reste dispo dans l'onglet "Historique" de l'entité.
+    ha.set_state(
+        f"sensor.{entity_key}_price",
+        state=round(float(last["close"]), 2),
+        attributes={
+            "friendly_name": f"{symbol} prix",
+            "unit_of_measurement": "USD",
+            "device_class": "monetary",
+            "state_class": "measurement",
+        },
+    )
+    ha.set_state(
+        f"sensor.{entity_key}_rsi",
+        state=round(float(last["rsi"]), 1),
+        attributes={
+            "friendly_name": f"{symbol} RSI",
+            "state_class": "measurement",
+        },
+    )
+
 
 def main() -> None:
     opts = load_options()

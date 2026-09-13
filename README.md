@@ -22,10 +22,21 @@ pour le fonctionnement.
 Les entités `sensor.btc_signal` et `sensor.eth_signal` apparaissent alors dans
 **Outils de développement → États**.
 
-## Notifications
+## Notifications & Dashboard
 
-Voir `deploy/ha_automation_example.yaml` — automatisation HA classique (à coller
-en YAML) qui notifie ton téléphone quand le signal passe à `buy` ou `sell`.
+Trois capteurs par actif : `sensor.<x>_signal` (buy/sell/hold), `sensor.<x>_price`
+et `sensor.<x>_rsi` (numériques — nécessaires pour tracer une tendance dans une
+carte Lovelace, l'état d'un capteur texte n'étant pas graphable).
+
+1. Crée un toggle : **Paramètres → Appareils et services → Hélpers → "+ Créer un
+   hélper" → Bouton à bascule** → nomme-le "Notifications crypto" (crée
+   `input_boolean.crypto_notifications`)
+2. Colle `deploy/ha_automation_example.yaml` dans une automatisation (respecte
+   ce toggle avant de notifier)
+3. Colle `deploy/lovelace_dashboard_example.yaml` dans un dashboard (voir
+   commentaires en tête de fichier) → tu obtiens les signaux courants, les prix,
+   et un graphique d'historique prix+RSI par actif, avec le toggle pour couper
+   les notifs sans arrêter l'add-on
 
 ## Pourquoi un add-on et pas systemd/cron ?
 

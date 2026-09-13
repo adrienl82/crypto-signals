@@ -1,0 +1,57 @@
+# Comment l'ajouter (depuis ton téléphone, sans YAML mode si tu préfères) :
+#
+# 1. Crée d'abord le helper toggle :
+#    Paramètres -> Appareils et services -> Hélpers -> "+ Créer un hélper"
+#    -> "Bouton à bascule" (Toggle) -> nom "Notifications crypto"
+#    -> ça crée input_boolean.crypto_notifications
+#
+# 2. Vue Lovelace -> "+" pour ajouter une vue, ou modifie une vue existante
+#    -> en haut à droite "..." -> "Modifier en YAML" -> colle ce qui suit
+#    (ou recrée les cartes une par une en mode visuel, plus long mais possible)
+
+title: Crypto
+views:
+  - title: Crypto
+    icon: mdi:currency-btc
+    cards:
+      - type: entities
+        title: Signaux & notifications
+        entities:
+          - entity: input_boolean.crypto_notifications
+            name: Notifications actives
+          - entity: sensor.btc_signal
+            name: Signal BTC
+          - entity: sensor.eth_signal
+            name: Signal ETH
+
+      - type: glance
+        title: Cours actuels
+        entities:
+          - entity: sensor.btc_price
+            name: BTC
+          - entity: sensor.eth_price
+            name: ETH
+
+      - type: history-graph
+        title: Tendance BTC (prix)
+        hours_to_show: 168   # 7 jours ; augmente si tu veux plus de recul
+        entities:
+          - entity: sensor.btc_price
+
+      - type: history-graph
+        title: Tendance BTC (RSI)
+        hours_to_show: 168
+        entities:
+          - entity: sensor.btc_rsi
+
+      - type: history-graph
+        title: Tendance ETH (prix)
+        hours_to_show: 168
+        entities:
+          - entity: sensor.eth_price
+
+      - type: history-graph
+        title: Tendance ETH (RSI)
+        hours_to_show: 168
+        entities:
+          - entity: sensor.eth_rsi
