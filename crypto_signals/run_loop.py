@@ -72,12 +72,14 @@ def process_symbol(opts: dict, symbol_cfg: dict, ha: HomeAssistantClient) -> Non
     # (history-graph, sensor card...) puissent tracer une courbe de tendance.
     # L'état d'un capteur texte ("hold"/"buy"/"sell") n'est pas graphable,
     # mais son historique reste dispo dans l'onglet "Historique" de l'entité.
+    quote_currency = symbol.split("/")[-1] if "/" in symbol else "USD"
+
     ha.set_state(
         f"sensor.{entity_key}_price",
         state=round(float(last["close"]), 2),
         attributes={
             "friendly_name": f"{symbol} prix",
-            "unit_of_measurement": "USD",
+            "unit_of_measurement": quote_currency,
             "device_class": "monetary",
             "state_class": "measurement",
         },
