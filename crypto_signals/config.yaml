@@ -1,0 +1,45 @@
+name: "Crypto Signals"
+version: "1.0.0"
+slug: "crypto_signals"
+description: "RSI/SMA sur BTC/ETH -> pousse sensor.<x>_signal (buy/sell/hold) dans HA"
+url: "https://github.com/adrienl82/crypto-signals"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+init: false
+
+# Donne accès à l'API HA locale via le proxy Supervisor (SUPERVISOR_TOKEN),
+# pas besoin de créer un Long-Lived Token manuellement.
+homeassistant_api: true
+hassio_api: true
+
+options:
+  exchange: "binance"
+  timeframe: "1d"
+  interval_minutes: 60
+  rsi_period: 14
+  sma_fast: 5
+  sma_slow: 10
+  rsi_buy: 35
+  rsi_sell: 65
+  symbols:
+    - symbol: "BTC/USDT"
+      entity_key: "btc"
+    - symbol: "ETH/USDT"
+      entity_key: "eth"
+
+schema:
+  exchange: str
+  timeframe: str
+  interval_minutes: int(5,1440)
+  rsi_period: int
+  sma_fast: int
+  sma_slow: int
+  rsi_buy: int
+  rsi_sell: int
+  symbols:
+    - symbol: str
+      entity_key: str
