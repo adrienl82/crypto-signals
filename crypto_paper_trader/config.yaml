@@ -1,0 +1,57 @@
+name: "Crypto Paper Trader"
+version: "1.0.0"
+slug: "crypto_paper_trader"
+description: "Simulation d'achat/vente BTC/ETH en continu, capital fictif, frais type Kraken"
+url: "https://github.com/adrienl82/crypto-signals"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+init: false
+
+homeassistant_api: true
+hassio_api: true
+
+options:
+  exchange: "kraken"
+  timeframe: "1h"
+  interval_minutes: 60
+  initial_capital: 1000
+  fee_pct: 0.26
+  max_exposure_per_asset_pct: 40
+  rsi_period: 14
+  sma_fast: 5
+  sma_slow: 10
+  rsi_buy: 35
+  rsi_sell: 65
+  stop_loss_pct: -7
+  take_profit_pct: 12
+  ha_base_url: ""
+  ha_token: ""
+  symbols:
+    - symbol: "BTC/EUR"
+      entity_key: "btc"
+    - symbol: "ETH/EUR"
+      entity_key: "eth"
+
+schema:
+  exchange: str
+  timeframe: str
+  interval_minutes: int(5,1440)
+  initial_capital: float
+  fee_pct: float
+  max_exposure_per_asset_pct: float
+  rsi_period: int
+  sma_fast: int
+  sma_slow: int
+  rsi_buy: int
+  rsi_sell: int
+  stop_loss_pct: float
+  take_profit_pct: float
+  ha_base_url: str?
+  ha_token: password?
+  symbols:
+    - symbol: str
+      entity_key: str

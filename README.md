@@ -55,3 +55,57 @@ manuellement (le Supervisor l'injecte automatiquement).
   décision, pas un bot de trading (aucun ordre n'est jamais passé).
 - Historique brut dans `/data/history/*.csv` (persistant tant que l'add-on
   n'est pas désinstallé).
+
+## Add-on 2 : Crypto Paper Trader (simulation live)
+
+Deuxième add-on dans ce même dépôt (`crypto_paper_trader/`) : simule des
+achats/ventes en continu avec un capital fictif (1000 EUR par défaut), en
+utilisant des prix live (via ccxt) et la même stratégie que le backtest
+(`backtest.py` à la racine). Aucun ordre réel n'est jamais passé.
+
+### Installation
+Même dépôt, donc même procédure : une fois `adrienl82/crypto-signals` ajouté
+comme dépôt d'add-ons, tu verras aussi **"Crypto Paper Trader"** dans la
+boutique, en plus de "Crypto Signals".
+
+### Capteurs créés
+- `sensor.paper_portfolio_value` — valeur totale (cash + positions), en EUR
+- `sensor.paper_portfolio_cash`
+- `sensor.paper_portfolio_return` — performance en %
+- `sensor.paper_position_btc` / `sensor.paper_position_eth` — valeur de
+  chaque position ouverte
+- `sensor.paper_portfolio_last_trade` — dernier trade, avec les 5 derniers
+  dans l'attribut `history`
+
+### Configuration
+Capital initial, frais (%), exposition max par actif, seuils RSI,
+stop-loss/take-profit : tout est réglable dans l'onglet Configuration de
+l'add-on. **Le capital initial n'est utilisé qu'à la toute première
+exécution** (le portefeuille est ensuite persistant dans `/data/portfolio.json`).
+Pour repartir de zéro : désinstalle/réinstalle l'add-on, ou supprime ce
+fichier via l'add-on "File editor"/"Terminal & SSH".
+
+### Dashboard (carte à ajouter)
+```yaml
+type: entities
+title: Simulation trading (1000 EUR fictifs)
+entities:
+  - entity: sensor.paper_portfolio_value
+    name: Valeur totale
+  - entity: sensor.paper_portfolio_return
+    name: Performance
+  - entity: sensor.paper_portfolio_cash
+    name: Cash disponible
+  - entity: sensor.paper_position_btc
+    name: Position BTC
+  - entity: sensor.paper_position_eth
+    name: Position ETH
+  - entity: sensor.paper_portfolio_last_trade
+    name: Dernier trade
+```
+
+### Limites
+- Simulation pure, pas de garantie de performance, stratégie simple non
+  optimisée — outil pédagogique/comparatif, pas un conseil financier
+- Les prix récupérés dépendent de la disponibilité de l'exchange choisi
+  (Kraken par défaut) pour la paire configurée
