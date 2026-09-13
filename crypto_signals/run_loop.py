@@ -70,7 +70,11 @@ def process_symbol(opts: dict, symbol_cfg: dict, ha: HomeAssistantClient) -> Non
 
 
 def main() -> None:
-    ha = HomeAssistantClient()
+    opts = load_options()
+    ha = HomeAssistantClient(
+        base_url=opts.get("ha_base_url") or None,
+        token=opts.get("ha_token") or None,
+    )
     while True:
         opts = load_options()  # relu à chaque cycle: la config est modifiable à chaud depuis l'UI
         for symbol_cfg in opts["symbols"]:

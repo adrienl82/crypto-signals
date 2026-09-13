@@ -24,6 +24,10 @@ class HomeAssistantClient:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         }
+        if not self.token:
+            log.warning("Aucun token disponible (ni SUPERVISOR_TOKEN, ni ha_token en option) — les appels échoueront en 401.")
+        else:
+            log.info("Token pret (longueur=%d, source=%s)", len(self.token), "option ha_token" if token else "SUPERVISOR_TOKEN")
 
     def set_state(self, entity_id: str, state: str, attributes: dict | None = None) -> bool:
         url = f"{self.base_url}/states/{entity_id}"

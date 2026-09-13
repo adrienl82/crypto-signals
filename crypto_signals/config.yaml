@@ -1,5 +1,5 @@
 name: "Crypto Signals"
-version: "1.0.0"
+version: "1.0.1"
 slug: "crypto_signals"
 description: "RSI/SMA sur BTC/ETH -> pousse sensor.<x>_signal (buy/sell/hold) dans HA"
 url: "https://github.com/adrienl82/crypto-signals"
@@ -25,6 +25,8 @@ options:
   sma_slow: 10
   rsi_buy: 35
   rsi_sell: 65
+  ha_base_url: ""
+  ha_token: ""
   symbols:
     - symbol: "BTC/USDT"
       entity_key: "btc"
@@ -40,6 +42,8 @@ schema:
   sma_slow: int
   rsi_buy: int
   rsi_sell: int
+  ha_base_url: str?
+  ha_token: password?
   symbols:
     - symbol: str
       entity_key: str
