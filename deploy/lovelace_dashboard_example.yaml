@@ -1,13 +1,12 @@
-# Comment l'ajouter (depuis ton téléphone, sans YAML mode si tu préfères) :
+# Comment l'ajouter (depuis ton téléphone) :
 #
-# 1. Crée d'abord le helper toggle :
-#    Paramètres -> Appareils et services -> Hélpers -> "+ Créer un hélper"
-#    -> "Bouton à bascule" (Toggle) -> nom "Notifications crypto"
-#    -> ça crée input_boolean.crypto_notifications
-#
-# 2. Vue Lovelace -> "+" pour ajouter une vue, ou modifie une vue existante
+# 1. Vue Lovelace -> "+" pour ajouter une vue, ou modifie une vue existante
 #    -> en haut à droite "..." -> "Modifier en YAML" -> colle ce qui suit
-#    (ou recrée les cartes une par une en mode visuel, plus long mais possible)
+#
+# Pas besoin de créer de helper : les deux automatisations (une fois ajoutées
+# via deploy/ha_automation_example.yaml) apparaissent comme des entités
+# automation.* avec un interrupteur marche/arrêt natif -- c'est ton bouton
+# "activer/désactiver les notifications", déjà inclus ci-dessous.
 
 title: Crypto
 views:
@@ -17,8 +16,10 @@ views:
       - type: entities
         title: Signaux & notifications
         entities:
-          - entity: input_boolean.crypto_notifications
-            name: Notifications actives
+          - entity: automation.crypto_alerte_signal_btc
+            name: Notifs BTC actives
+          - entity: automation.crypto_alerte_signal_eth
+            name: Notifs ETH actives
           - entity: sensor.btc_signal
             name: Signal BTC
           - entity: sensor.eth_signal

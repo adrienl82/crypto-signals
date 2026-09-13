@@ -28,15 +28,18 @@ Trois capteurs par actif : `sensor.<x>_signal` (buy/sell/hold), `sensor.<x>_pric
 et `sensor.<x>_rsi` (numériques — nécessaires pour tracer une tendance dans une
 carte Lovelace, l'état d'un capteur texte n'étant pas graphable).
 
-1. Crée un toggle : **Paramètres → Appareils et services → Hélpers → "+ Créer un
-   hélper" → Bouton à bascule** → nomme-le "Notifications crypto" (crée
-   `input_boolean.crypto_notifications`)
-2. Colle `deploy/ha_automation_example.yaml` dans une automatisation (respecte
-   ce toggle avant de notifier)
-3. Colle `deploy/lovelace_dashboard_example.yaml` dans un dashboard (voir
-   commentaires en tête de fichier) → tu obtiens les signaux courants, les prix,
-   et un graphique d'historique prix+RSI par actif, avec le toggle pour couper
-   les notifs sans arrêter l'add-on
+1. Colle `deploy/ha_automation_example.yaml` dans une automatisation
+   (Paramètres → Automatisations → "+" → "..." → Modifier en YAML)
+2. Colle `deploy/lovelace_dashboard_example.yaml` dans un dashboard → tu
+   obtiens les signaux courants, les prix, un graphique d'historique
+   prix+RSI par actif, et un interrupteur pour couper les notifs (c'est
+   l'interrupteur natif marche/arrêt de l'automatisation elle-même — pas
+   besoin de créer un helper séparé)
+
+Note : l'`entity_id` exact d'une automatisation dépend de comment HA slugifie
+son `alias` à la création. Si `automation.crypto_alerte_signal_btc` n'existe
+pas tel quel dans ton dashboard, va voir Outils de développement → États,
+cherche "crypto" pour trouver le vrai nom, et corrige la carte en conséquence.
 
 ## Pourquoi un add-on et pas systemd/cron ?
 
