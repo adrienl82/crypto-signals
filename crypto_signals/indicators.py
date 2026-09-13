@@ -18,16 +18,10 @@ def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
-def classify_signal(
-    df: pd.DataFrame,
-    rsi_buy: float = 35.0,
-    rsi_sell: float = 65.0,
-) -> str:
+def classify_signal(df: pd.DataFrame, rsi_buy: float = 35.0, rsi_sell: float = 65.0) -> str:
     """Retourne 'buy', 'sell' ou 'hold' à partir de la dernière ligne du df.
 
     df doit contenir les colonnes: close, sma_fast, sma_slow, rsi
-    Règle simple, volontairement lisible : RSI en zone extrême
-    + confirmation de tendance par le croisement des moyennes mobiles.
     """
     last = df.iloc[-1]
     prev = df.iloc[-2]

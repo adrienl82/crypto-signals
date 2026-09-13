@@ -1,10 +1,14 @@
-"""Client minimal pour l'API REST de Home Assistant.
+"""Client pour l'API HA, via le proxy Supervisor quand on tourne en add-on.
 
-Doc HA: https://developers.home-assistant.io/docs/api/rest/
+Dans un add-on avec `homeassistant_api: true` et `hassio_api: true`, le
+Supervisor injecte automatiquement la variable d'environnement
+SUPERVISOR_TOKEN, et l'API HA est joignable sur http://supervisor/core/api.
+Doc: https://developers.home-assistant.io/docs/add-ons/communication/
 """
 from __future__ import annotations
 
 import logging
+import os
 
 import requests
 
@@ -12,17 +16,17 @@ log = logging.getLogger(__name__)
 
 
 class HomeAssistantClient:
-    def __init__(self, base_url: str, token: str, timeout: float = 5.0):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str | None = None, token: str | None = None, timeout: float = 5.0):
+        self.base_url = (base_url or "http://supervisor/core/api").rstrip("/")
+        self.token = token or os.environ.get("SUPERVISOR_TOKEN", "")
         self.timeout = timeout
         self.headers = {
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         }
 
     def set_state(self, entity_id: str, state: str, attributes: dict | None = None) -> bool:
-        """Crée/,met à jour une entité (ex: sensor.btc_signal)."""
-        url = f"{self.base_url}/api/states/{entity_id}"
+        url = f"{self.base_url}/states/{entity_id}"
         payload = {"state": state, "attributes": attributes or {}}
         try:
             resp = requests.post(url, json=payload, headers=self.headers, timeout=self.timeout)
