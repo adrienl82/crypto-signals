@@ -1,0 +1,23 @@
+# Copier ce fichier en config.yaml et remplir tes valeurs.
+# Ne JAMAIS committer config.yaml (il contient ton token HA) - il est dans .gitignore.
+
+exchange: binance        # tout exchange supporté par ccxt (kraken, coinbase, etc.)
+timeframe: "1d"           # "1h", "4h", "1d"...
+limit: 60                 # nb de bougies récupérées à chaque run
+
+sma_fast: 5
+sma_slow: 10
+rsi_period: 14
+rsi_buy: 35                # sous ce seuil -> signal "buy"
+rsi_sell: 65                # au-dessus -> signal "sell"
+
+# URL locale de ton HA (ex: http://homeassistant.local:8123 ou http://192.168.1.x:8123)
+ha_base_url: "http://homeassistant.local:8123"
+# Génère un "Long-Lived Access Token" dans HA: Profil -> Sécurité -> Jetons d'accès
+ha_token: "REMPLACE_MOI"
+
+symbols:
+  - symbol: "BTC/USDT"
+    entity_key: "btc"
+  - symbol: "ETH/USDT"
+    entity_key: "eth"

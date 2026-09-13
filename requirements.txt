@@ -1,0 +1,4 @@
+ccxt>=4.3
+pandas>=2.0
+PyYAML>=6.0
+requests>=2.31

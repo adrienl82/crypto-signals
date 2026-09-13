@@ -1,0 +1,5 @@
+config.yaml
+venv/
+history/
+__pycache__/
+*.pyc
