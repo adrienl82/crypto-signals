@@ -33,9 +33,22 @@ def load_options() -> dict:
 
 def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 60) -> pd.DataFrame:
     exchange = getattr(ccxt, exchange_id)({"enableRateLimit": True})
-    raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    # +1 pour compenser la bougie en cours qu'on va retirer juste apres,
+    # sans perdre de profondeur d'historique pour les indicateurs.
+    raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit + 1)
     df = pd.DataFrame(raw, columns=["ts", "open", "high", "low", "close", "volume"])
     df["date"] = pd.to_datetime(df["ts"], unit="ms")
+
+    # La derniere bougie retournee par l'exchange est generalement celle en
+    # cours de formation (pas encore cloturee). La garder fait "flip-flopper"
+    # le RSI/croisement SMA a chaque cycle tant que le prix bouge dans la
+    # bougie courante, meme sans nouvelle bougie -> sur-trading + frais qui
+    # mangent tout gain. On ne garde que les bougies deja cloturees.
+    if len(df):
+        tf_ms = exchange.parse_timeframe(timeframe) * 1000
+        now_ms = exchange.milliseconds()
+        if df.iloc[-1]["ts"] + tf_ms > now_ms:
+            df = df.iloc[:-1].reset_index(drop=True)
     return df
 
 
