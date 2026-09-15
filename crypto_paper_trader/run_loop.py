@@ -17,6 +17,7 @@ import pandas as pd
 
 from ha_client import HomeAssistantClient
 from indicators import DEFAULT_WEIGHTS, compute_all, score_market
+from market_news import ASSET_KEYWORDS, fetch_cryptopanic_news, fetch_rss_news
 from market_sentiment import fetch_fear_greed
 from portfolio import load_state, portfolio_value, record_trade, reset_state, save_state
 
@@ -250,6 +251,41 @@ def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, t
 RESET_HELPER = "input_boolean.reset_paper_portfolio"
 
 
+def refresh_news(opts: dict, ha: HomeAssistantClient) -> None:
+    """Interroge RSS (toujours) + CryptoPanic (si token configure) et pousse
+    un sensor HA par actif suivi. Independant du cycle de trading -- la news
+    a son propre rythme de rafraichissement (cf. NEWS_POLL_SECONDS)."""
+    symbol_keys = [s["entity_key"] for s in opts["symbols"]]
+    asset_keywords = {k: ASSET_KEYWORDS[k] for k in symbol_keys if k in ASSET_KEYWORDS}
+
+    rss_by_asset = fetch_rss_news(asset_keywords, max_items_per_asset=5)
+
+    cp_token = opts.get("cryptopanic_token") or None
+    cp_currencies = [k.upper() for k in symbol_keys if k in ASSET_KEYWORDS]
+    cp_items = fetch_cryptopanic_news(cp_token, cp_currencies, max_items=15) or []
+    cp_by_asset: dict[str, list[dict]] = {key: [] for key in asset_keywords}
+    for item in cp_items:
+        for code in item.get("currencies") or []:
+            key = code.lower()
+            if key in cp_by_asset:
+                cp_by_asset[key].append(item)
+
+    for key in asset_keywords:
+        rss_items = rss_by_asset.get(key, [])
+        cp_items_for_asset = cp_by_asset.get(key, [])
+        latest = (cp_items_for_asset[:1] or rss_items[:1] or [{}])[0]
+        ha.set_state(
+            f"sensor.crypto_news_{key}",
+            state=latest.get("title", "aucune news recente")[:250],
+            attributes={
+                "friendly_name": f"News {key.upper()}",
+                "rss": rss_items,
+                "cryptopanic": cp_items_for_asset,
+                "cryptopanic_enabled": cp_token is not None,
+            },
+        )
+
+
 def maybe_reset(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
     """Si le helper HA input_boolean.reset_paper_portfolio est active, on repart
     a zero (cash=initial_capital, aucune position, historique vide) et on
@@ -264,6 +300,7 @@ def maybe_reset(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
 
 
 CONTROL_POLL_SECONDS = 10  # frequence de verification du helper de reset, independante du cycle de trading
+NEWS_POLL_SECONDS = 20 * 60  # rythme du rafraichissement des news, independant du cycle de trading
 
 
 def main() -> None:
@@ -276,6 +313,7 @@ def main() -> None:
     state = load_state(STATE_PATH, opts["initial_capital"], symbol_keys)
 
     next_cycle_at = 0.0  # force un premier cycle de trading immediat au demarrage
+    next_news_at = 0.0   # idem pour les news
 
     while True:
         opts = load_options()
@@ -290,6 +328,14 @@ def main() -> None:
             log.info("Portefeuille reinitialise via input_boolean, sans attendre le prochain cycle")
 
         now = time.time()
+
+        if now >= next_news_at:
+            try:
+                refresh_news(opts, ha)
+            except Exception:
+                log.exception("Echec du rafraichissement des news")
+            next_news_at = now + NEWS_POLL_SECONDS
+
         if now >= next_cycle_at:
             try:
                 state = run_cycle(opts, state, ha)
