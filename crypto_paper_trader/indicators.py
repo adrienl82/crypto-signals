@@ -102,7 +102,9 @@ def compute_all(df: pd.DataFrame, fast: int = 5, slow: int = 10, rsi_period: int
 # Moteur de score multi-indicateurs (activé par use_score_engine dans config.yaml)
 # ---------------------------------------------------------------------------
 
-DEFAULT_WEIGHTS = {"rsi": 1.0, "macd": 1.0, "bollinger": 0.7, "trend": 0.8, "volume": 0.5}
+DEFAULT_WEIGHTS = {
+    "rsi": 1.0, "macd": 1.0, "bollinger": 0.7, "trend": 0.8, "volume": 0.5, "sentiment": 0.4,
+}
 
 
 def _score_rsi(value: float, rsi_buy: float, rsi_sell: float) -> float:
@@ -152,6 +154,22 @@ def _score_volume(vol_ratio: float, price_up: bool) -> float:
     return boost if price_up else -boost
 
 
+def _score_sentiment(fng_value: float | None) -> float | None:
+    """Fear & Greed Index, utilise en contrarien : peur extreme => plutot
+    favorable a l'achat (score positif), avidite extreme => plutot prudent
+    (score negatif). Retourne None si la donnee n'est pas disponible, pour
+    que score_market() puisse l'exclure proprement du calcul (plutot que de
+    diluer le score avec un 0 qui n'a pas de sens ici)."""
+    if fng_value is None:
+        return None
+    if fng_value <= 25:
+        return 1.0
+    if fng_value >= 75:
+        return -1.0
+    mid, span = 50.0, 25.0
+    return (mid - fng_value) / span
+
+
 def score_market(
     df: pd.DataFrame,
     rsi_buy: float = 35.0,
@@ -161,11 +179,17 @@ def score_market(
     sell_threshold: float = -0.35,
     atr_stop_mult: float = 1.5,
     atr_target_mult: float = 3.0,
+    fear_greed_value: float | None = None,
 ) -> dict:
-    """Combine RSI, MACD, Bollinger, ADX (force de tendance) et volume en un score
-    pondéré -1..+1, au lieu d'un seul seuil RSI / croisement SMA.
+    """Combine RSI, MACD, Bollinger, ADX (force de tendance), volume et,
+    optionnellement, l'indice Fear & Greed (sentiment global du marche, en
+    contrarien) en un score pondere -1..+1, au lieu d'un seul seuil RSI /
+    croisement SMA.
 
     df doit être le résultat de compute_all() (colonnes rsi, macd_hist, bb_*, adx, vol_ratio, atr).
+    fear_greed_value : valeur 0..100 de l'indice Fear & Greed du jour (meme
+    valeur pour tous les actifs, c'est un contexte marche global) ou None
+    pour l'exclure du calcul (ex: API indisponible).
     Retourne : action, score, confidence, breakdown par indicateur, et stop/target
     suggérés à partir de l'ATR courant (utile en info même si non utilisé pour trader).
     """
@@ -184,6 +208,11 @@ def score_market(
         "trend": (_score_trend(last["adx"], trend_up), weights.get("trend", 0.8)),
         "volume": (_score_volume(last["vol_ratio"], price_up), weights.get("volume", 0.5)),
     }
+
+    sentiment_score = _score_sentiment(fear_greed_value)
+    if sentiment_score is not None:
+        parts["sentiment"] = (sentiment_score, weights.get("sentiment", DEFAULT_WEIGHTS["sentiment"]))
+
     total_w = sum(w for _, w in parts.values())
     score = sum(s * w for s, w in parts.values()) / total_w if total_w else 0.0
 

@@ -17,6 +17,7 @@ import pandas as pd
 
 from ha_client import HomeAssistantClient
 from indicators import DEFAULT_WEIGHTS, compute_all, score_market
+from market_sentiment import fetch_fear_greed
 from portfolio import load_state, portfolio_value, record_trade, save_state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -75,7 +76,13 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
         "bollinger": opts.get("w_bollinger", DEFAULT_WEIGHTS["bollinger"]),
         "trend": opts.get("w_trend", DEFAULT_WEIGHTS["trend"]),
         "volume": opts.get("w_volume", DEFAULT_WEIGHTS["volume"]),
+        "sentiment": opts.get("w_sentiment", DEFAULT_WEIGHTS["sentiment"]),
     }
+
+    # Sentiment global du marche (Fear & Greed) : une seule requete par cycle,
+    # partagee entre tous les actifs -- ce n'est pas un signal par actif.
+    sentiment = fetch_fear_greed()
+    fear_greed_value = sentiment["value"] if sentiment else None
 
     prices: dict[str, float] = {}
     frames: dict[str, pd.DataFrame] = {}
@@ -100,6 +107,7 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
                 sell_threshold=opts.get("score_sell_threshold", -0.35),
                 atr_stop_mult=opts.get("atr_stop_mult", 1.5),
                 atr_target_mult=opts.get("atr_target_mult", 3.0),
+                fear_greed_value=fear_greed_value,
             )
         except Exception:
             log.exception("Calcul du score impossible pour %s", symbol)
@@ -170,14 +178,14 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
                               fee=round(trade_fee, 2), pnl_pct=None, reason=buy_reason)
 
     total_after = portfolio_value(state, prices)
-    push_to_ha(ha, opts, state, prices, total_after, scores)
+    push_to_ha(ha, opts, state, prices, total_after, scores, sentiment)
     log.info("Valeur portefeuille: %.2f EUR (depart %.2f, avant ce cycle %.2f)",
               total_after, state["initial_capital"], total_before)
     return state
 
 
 def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, total: float,
-               scores: dict | None = None) -> None:
+               scores: dict | None = None, sentiment: dict | None = None) -> None:
     initial = state["initial_capital"]
     return_pct = (total / initial - 1) * 100 if initial else 0.0
 
@@ -201,6 +209,16 @@ def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, t
     last_trades = state["trades"][-5:]
     ha.set_state("sensor.paper_portfolio_last_trade", state=(last_trades[-1]["action"] if last_trades else "aucun"),
                  attributes={"friendly_name": "Dernier trade (simulation)", "history": last_trades})
+
+    if sentiment:
+        ha.set_state("sensor.crypto_fear_greed_index", state=sentiment["value"], attributes={
+            "friendly_name": "Indice Fear & Greed (marche crypto)",
+            "state_class": "measurement",
+            "classification": sentiment["classification"],
+            "previous_value": sentiment["previous_value"],
+            "trend": sentiment["trend"],
+            "source": "alternative.me",
+        })
 
     for symbol_cfg in opts["symbols"]:
         key = symbol_cfg["entity_key"]
