@@ -263,6 +263,9 @@ def maybe_reset(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
     return state
 
 
+CONTROL_POLL_SECONDS = 10  # frequence de verification du helper de reset, independante du cycle de trading
+
+
 def main() -> None:
     opts = load_options()
     ha = HomeAssistantClient(
@@ -272,15 +275,30 @@ def main() -> None:
     symbol_keys = [s["entity_key"] for s in opts["symbols"]]
     state = load_state(STATE_PATH, opts["initial_capital"], symbol_keys)
 
+    next_cycle_at = 0.0  # force un premier cycle de trading immediat au demarrage
+
     while True:
         opts = load_options()
+
+        # Boucle de controle rapide (reset, futurs toggles) : quasi temps reel,
+        # decouplee du rythme du cycle de trading qui reste lent expres
+        # (evite le sur-trading, cf. fix bougie en cours de formation).
+        state_before = state
         state = maybe_reset(opts, state, ha)
-        try:
-            state = run_cycle(opts, state, ha)
-        except Exception:
-            log.exception("Echec du cycle de simulation")
-        save_state(STATE_PATH, state)
-        time.sleep(max(60, int(opts.get("interval_minutes", 60)) * 60))
+        if state is not state_before:
+            save_state(STATE_PATH, state)
+            log.info("Portefeuille reinitialise via input_boolean, sans attendre le prochain cycle")
+
+        now = time.time()
+        if now >= next_cycle_at:
+            try:
+                state = run_cycle(opts, state, ha)
+            except Exception:
+                log.exception("Echec du cycle de simulation")
+            save_state(STATE_PATH, state)
+            next_cycle_at = now + max(60, int(opts.get("interval_minutes", 60)) * 60)
+
+        time.sleep(CONTROL_POLL_SECONDS)
 
 
 if __name__ == "__main__":
