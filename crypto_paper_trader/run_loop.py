@@ -45,10 +45,20 @@ def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 60) 
     # bougie courante, meme sans nouvelle bougie -> sur-trading + frais qui
     # mangent tout gain. On ne garde que les bougies deja cloturees.
     if len(df):
-        tf_ms = exchange.parse_timeframe(timeframe) * 1000
-        now_ms = exchange.milliseconds()
-        if df.iloc[-1]["ts"] + tf_ms > now_ms:
-            df = df.iloc[:-1].reset_index(drop=True)
+        try:
+            tf_ms = exchange.parse_timeframe(timeframe) * 1000
+            now_ms = exchange.milliseconds()
+            if df.iloc[-1]["ts"] + tf_ms > now_ms:
+                df = df.iloc[:-1].reset_index(drop=True)
+        except Exception:
+            # timeframe invalide/vide cote config : on garde toutes les
+            # bougies plutot que de faire planter le cycle. A corriger dans
+            # la config de l'add-on (champ "timeframe", ex: "1h").
+            log.warning(
+                "Impossible d'exclure la bougie en cours (timeframe=%r invalide) - "
+                "verifie le champ 'timeframe' dans la config de l'add-on",
+                timeframe,
+            )
     return df
 
 
