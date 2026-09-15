@@ -39,3 +39,27 @@ class HomeAssistantClient:
         except requests.RequestException as exc:
             log.error("HA set_state failed for %s: %s", entity_id, exc)
             return False
+
+    def get_state(self, entity_id: str) -> str | None:
+        """Retourne l'etat brut (string) de l'entite, ou None si absente/erreur
+        (ex: helper pas encore cree cote HA -> on ne bloque pas le cycle pour ca)."""
+        url = f"{self.base_url}/states/{entity_id}"
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=self.timeout)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json().get("state")
+        except requests.RequestException as exc:
+            log.error("HA get_state failed for %s: %s", entity_id, exc)
+            return None
+
+    def call_service(self, domain: str, service: str, data: dict | None = None) -> bool:
+        url = f"{self.base_url}/services/{domain}/{service}"
+        try:
+            resp = requests.post(url, json=data or {}, headers=self.headers, timeout=self.timeout)
+            resp.raise_for_status()
+            return True
+        except requests.RequestException as exc:
+            log.error("HA call_service failed for %s.%s: %s", domain, service, exc)
+            return False

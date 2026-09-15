@@ -18,7 +18,7 @@ import pandas as pd
 from ha_client import HomeAssistantClient
 from indicators import DEFAULT_WEIGHTS, compute_all, score_market
 from market_sentiment import fetch_fear_greed
-from portfolio import load_state, portfolio_value, record_trade, save_state
+from portfolio import load_state, portfolio_value, record_trade, reset_state, save_state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("crypto-paper-trader")
@@ -247,6 +247,22 @@ def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, t
             })
 
 
+RESET_HELPER = "input_boolean.reset_paper_portfolio"
+
+
+def maybe_reset(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
+    """Si le helper HA input_boolean.reset_paper_portfolio est active, on repart
+    a zero (cash=initial_capital, aucune position, historique vide) et on
+    desactive le helper pour ne pas reset en boucle. Absence du helper (pas
+    encore cree cote HA) = get_state renvoie None, ce qui ne declenche rien."""
+    if ha.get_state(RESET_HELPER) != "on":
+        return state
+    symbol_keys = [s["entity_key"] for s in opts["symbols"]]
+    state = reset_state(opts["initial_capital"], symbol_keys)
+    ha.call_service("input_boolean", "turn_off", {"entity_id": RESET_HELPER})
+    return state
+
+
 def main() -> None:
     opts = load_options()
     ha = HomeAssistantClient(
@@ -258,6 +274,7 @@ def main() -> None:
 
     while True:
         opts = load_options()
+        state = maybe_reset(opts, state, ha)
         try:
             state = run_cycle(opts, state, ha)
         except Exception:

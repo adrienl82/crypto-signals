@@ -26,6 +26,10 @@ def load_state(path: Path, initial_capital: float, symbol_keys: list[str]) -> di
         return state
 
     log.info("Aucun portfolio.json existant -> initialisation avec %.2f de capital", initial_capital)
+    return _fresh_state(initial_capital, symbol_keys)
+
+
+def _fresh_state(initial_capital: float, symbol_keys: list[str]) -> dict:
     return {
         "cash": initial_capital,
         "initial_capital": initial_capital,
@@ -33,6 +37,13 @@ def load_state(path: Path, initial_capital: float, symbol_keys: list[str]) -> di
         "trades": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def reset_state(initial_capital: float, symbol_keys: list[str]) -> dict:
+    """Repart de zero : cash = initial_capital, aucune position, historique vide.
+    Utilise par le helper HA input_boolean.reset_paper_portfolio (voir run_loop.py)."""
+    log.info("Reset du portefeuille demande -> retour a %.2f de capital", initial_capital)
+    return _fresh_state(initial_capital, symbol_keys)
 
 
 def save_state(path: Path, state: dict) -> None:
