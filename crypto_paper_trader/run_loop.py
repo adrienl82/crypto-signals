@@ -16,7 +16,7 @@ import ccxt
 import pandas as pd
 
 from ha_client import HomeAssistantClient
-from indicators import compute_all
+from indicators import DEFAULT_WEIGHTS, compute_all, score_market
 from portfolio import load_state, portfolio_value, record_trade, save_state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -45,9 +45,18 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
     rsi_buy, rsi_sell = opts["rsi_buy"], opts["rsi_sell"]
     stop_loss = opts["stop_loss_pct"] / 100
     take_profit = opts["take_profit_pct"] / 100
+    use_score_engine = opts.get("use_score_engine", False)
+    score_weights = {
+        "rsi": opts.get("w_rsi", DEFAULT_WEIGHTS["rsi"]),
+        "macd": opts.get("w_macd", DEFAULT_WEIGHTS["macd"]),
+        "bollinger": opts.get("w_bollinger", DEFAULT_WEIGHTS["bollinger"]),
+        "trend": opts.get("w_trend", DEFAULT_WEIGHTS["trend"]),
+        "volume": opts.get("w_volume", DEFAULT_WEIGHTS["volume"]),
+    }
 
     prices: dict[str, float] = {}
     frames: dict[str, pd.DataFrame] = {}
+    scores: dict[str, dict] = {}
 
     for symbol_cfg in opts["symbols"]:
         symbol, key = symbol_cfg["symbol"], symbol_cfg["entity_key"]
@@ -59,6 +68,18 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
             continue
         frames[key] = df
         prices[key] = float(df.iloc[-1]["close"])
+        # calcule toujours le score (visibilite/monitoring dans HA), meme si
+        # use_score_engine=false : ca permet de comparer avant de basculer.
+        try:
+            scores[key] = score_market(
+                df, rsi_buy=rsi_buy, rsi_sell=rsi_sell, weights=score_weights,
+                buy_threshold=opts.get("score_buy_threshold", 0.35),
+                sell_threshold=opts.get("score_sell_threshold", -0.35),
+                atr_stop_mult=opts.get("atr_stop_mult", 1.5),
+                atr_target_mult=opts.get("atr_target_mult", 3.0),
+            )
+        except Exception:
+            log.exception("Calcul du score impossible pour %s", symbol)
 
     total_before = portfolio_value(state, prices)
 
@@ -74,24 +95,32 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
 
         bullish_cross = prev["sma_fast"] <= prev["sma_slow"] and last["sma_fast"] > last["sma_slow"]
         bearish_cross = prev["sma_fast"] >= prev["sma_slow"] and last["sma_fast"] < last["sma_slow"]
+        score_result = scores.get(key)
+
+        if use_score_engine and score_result:
+            buy_signal = score_result["action"] == "buy"
+            sell_signal_core = score_result["action"] == "sell"
+            buy_reason = f"score {score_result['score']:+.2f}"
+            sell_reason = f"score {score_result['score']:+.2f}"
+        else:
+            buy_signal = last["rsi"] < rsi_buy or bullish_cross
+            sell_signal_core = last["rsi"] > rsi_sell or bearish_cross
+            buy_reason = "RSI survente" if last["rsi"] < rsi_buy else "croisement haussier"
+            sell_reason = "RSI surachat" if last["rsi"] > rsi_sell else "croisement baissier"
 
         # --- Sortie ---
+        # Le stop-loss / take-profit en % reste actif dans tous les cas : c'est le
+        # filet de securite, meme quand le score engine pilote l'entree/sortie normale.
         if pos["qty"] > 0:
             pnl_pct = (price - pos["entry_price"]) / pos["entry_price"]
-            sell_signal = last["rsi"] > rsi_sell or bearish_cross
             stop_hit = pnl_pct <= stop_loss
             tp_hit = pnl_pct >= take_profit
 
-            if sell_signal or stop_hit or tp_hit:
+            if sell_signal_core or stop_hit or tp_hit:
                 proceeds = pos["qty"] * price
                 trade_fee = proceeds * fee
                 state["cash"] += proceeds - trade_fee
-                reason = (
-                    "stop-loss" if stop_hit else
-                    "take-profit" if tp_hit else
-                    "RSI surachat" if last["rsi"] > rsi_sell else
-                    "croisement baissier"
-                )
+                reason = "stop-loss" if stop_hit else "take-profit" if tp_hit else sell_reason
                 record_trade(state, asset=key, symbol=symbol, action="SELL",
                               price=round(price, 2), qty=round(pos["qty"], 8),
                               fee=round(trade_fee, 2), pnl_pct=round(pnl_pct * 100, 2), reason=reason)
@@ -103,7 +132,6 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
         current_exposure = pos["qty"] * price
         max_allowed = total_now * max_exposure_pct
         room = max_allowed - current_exposure
-        buy_signal = last["rsi"] < rsi_buy or bullish_cross
 
         if buy_signal and room > 10 and state["cash"] > 10:
             invest_amount = min(room, state["cash"] * 0.5)
@@ -114,19 +142,19 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
                 pos["qty"] += qty
                 pos["entry_price"] = price
                 pos["invested"] += invest_amount
-                reason = "RSI survente" if last["rsi"] < rsi_buy else "croisement haussier"
                 record_trade(state, asset=key, symbol=symbol, action="BUY",
                               price=round(price, 2), qty=round(qty, 8),
-                              fee=round(trade_fee, 2), pnl_pct=None, reason=reason)
+                              fee=round(trade_fee, 2), pnl_pct=None, reason=buy_reason)
 
     total_after = portfolio_value(state, prices)
-    push_to_ha(ha, opts, state, prices, total_after)
+    push_to_ha(ha, opts, state, prices, total_after, scores)
     log.info("Valeur portefeuille: %.2f EUR (depart %.2f, avant ce cycle %.2f)",
               total_after, state["initial_capital"], total_before)
     return state
 
 
-def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, total: float) -> None:
+def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, total: float,
+               scores: dict | None = None) -> None:
     initial = state["initial_capital"]
     return_pct = (total / initial - 1) * 100 if initial else 0.0
 
@@ -163,6 +191,19 @@ def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, t
             "qty": pos["qty"],
             "entry_price": pos["entry_price"],
         })
+
+        score_result = (scores or {}).get(key)
+        if score_result:
+            ha.set_state(f"sensor.paper_market_score_{key}", state=score_result["score"], attributes={
+                "friendly_name": f"Score marche {key.upper()}",
+                "state_class": "measurement",
+                "action": score_result["action"],
+                "confidence": score_result["confidence"],
+                "breakdown": score_result["breakdown"],
+                "atr": score_result["atr"],
+                "suggested_stop": score_result["stop"],
+                "suggested_target": score_result["target"],
+            })
 
 
 def main() -> None:

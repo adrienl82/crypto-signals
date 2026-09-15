@@ -28,6 +28,16 @@ options:
   rsi_sell: 65
   stop_loss_pct: -7
   take_profit_pct: 12
+  use_score_engine: false
+  score_buy_threshold: 0.35
+  score_sell_threshold: -0.35
+  atr_stop_mult: 1.5
+  atr_target_mult: 3.0
+  w_rsi: 1.0
+  w_macd: 1.0
+  w_bollinger: 0.7
+  w_trend: 0.8
+  w_volume: 0.5
   ha_base_url: ""
   ha_token: ""
   symbols:
@@ -50,6 +60,16 @@ schema:
   rsi_sell: int
   stop_loss_pct: float
   take_profit_pct: float
+  use_score_engine: bool
+  score_buy_threshold: float
+  score_sell_threshold: float
+  atr_stop_mult: float
+  atr_target_mult: float
+  w_rsi: float
+  w_macd: float
+  w_bollinger: float
+  w_trend: float
+  w_volume: float
   ha_base_url: str?
   ha_token: password?
   symbols:
