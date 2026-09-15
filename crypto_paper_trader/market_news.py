@@ -102,7 +102,7 @@ def fetch_cryptopanic_news(token: str | None, currencies: list[str],
 
     try:
         resp = requests.get(
-            "https://cryptopanic.com/api/v1/posts/",
+            "https://cryptopanic.com/api/developer/v2/posts/",
             params={"auth_token": token, "currencies": ",".join(currencies), "public": "true"},
             timeout=10,
         )
@@ -119,6 +119,10 @@ def fetch_cryptopanic_news(token: str | None, currencies: list[str],
         _cp_cache["data"] = items
         _cp_cache["fetched_at"] = now
         return items
-    except Exception:
-        log.warning("CryptoPanic indisponible")
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "?"
+        log.warning("CryptoPanic indisponible: HTTP %s", status)
+        return _cp_cache["data"]
+    except Exception as exc:
+        log.warning("CryptoPanic indisponible: %s", exc)
         return _cp_cache["data"]
