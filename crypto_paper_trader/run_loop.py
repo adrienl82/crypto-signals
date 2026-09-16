@@ -19,6 +19,7 @@ from ha_client import HomeAssistantClient
 from indicators import DEFAULT_WEIGHTS, compute_all, score_market
 from market_news import ASSET_KEYWORDS, fetch_cryptopanic_news, fetch_rss_news
 from market_sentiment import fetch_fear_greed
+from news_sentiment_model import get_news_sentiment_score
 from portfolio import load_state, portfolio_value, record_trade, reset_state, save_state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -78,7 +79,9 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
         "trend": opts.get("w_trend", DEFAULT_WEIGHTS["trend"]),
         "volume": opts.get("w_volume", DEFAULT_WEIGHTS["volume"]),
         "sentiment": opts.get("w_sentiment", DEFAULT_WEIGHTS["sentiment"]),
+        "news_sentiment": opts.get("w_news_sentiment", DEFAULT_WEIGHTS["news_sentiment"]),
     }
+    sentiment_model_path = opts.get("sentiment_model_path") or None
 
     # Sentiment global du marche (Fear & Greed) : une seule requete par cycle,
     # partagee entre tous les actifs -- ce n'est pas un signal par actif.
@@ -99,6 +102,12 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
             continue
         frames[key] = df
         prices[key] = float(df.iloc[-1]["close"])
+        # Titres recents pour cet actif (rafraichis par refresh_news(), qui
+        # tourne a son propre rythme) : None si le modele est indisponible
+        # ou qu'aucun titre n'a pu etre classifie, plutot qu'un score neutre.
+        news_sentiment_score = get_news_sentiment_score(
+            _latest_titles_by_asset.get(key, []), sentiment_model_path
+        )
         # calcule toujours le score (visibilite/monitoring dans HA), meme si
         # use_score_engine=false : ca permet de comparer avant de basculer.
         try:
@@ -109,6 +118,7 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
                 atr_stop_mult=opts.get("atr_stop_mult", 1.5),
                 atr_target_mult=opts.get("atr_target_mult", 3.0),
                 fear_greed_value=fear_greed_value,
+                news_sentiment_score=news_sentiment_score,
             )
         except Exception:
             log.exception("Calcul du score impossible pour %s", symbol)
@@ -250,6 +260,12 @@ def push_to_ha(ha: HomeAssistantClient, opts: dict, state: dict, prices: dict, t
 
 RESET_HELPER = "input_boolean.reset_paper_portfolio"
 
+# Derniers titres par actif, rafraichis par refresh_news() et consommes par
+# run_cycle() pour le score de sentiment news -- les deux tournent a des
+# rythmes independants (NEWS_POLL_SECONDS vs interval_minutes), d'ou ce
+# cache plutot qu'un appel direct aux flux a chaque cycle de trading.
+_latest_titles_by_asset: dict[str, list[str]] = {}
+
 
 def refresh_news(opts: dict, ha: HomeAssistantClient) -> None:
     """Interroge RSS (toujours) + CryptoPanic (si token configure) et pousse
@@ -284,6 +300,11 @@ def refresh_news(opts: dict, ha: HomeAssistantClient) -> None:
                 "cryptopanic_enabled": cp_token is not None,
             },
         )
+        # CryptoPanic en priorite (deja filtre par devise, plus fiable) complete
+        # par RSS si besoin, dans l'ordre le plus recent d'abord.
+        titles = [i["title"] for i in cp_items_for_asset if i.get("title")]
+        titles += [i["title"] for i in rss_items if i.get("title") and i["title"] not in titles]
+        _latest_titles_by_asset[key] = titles
 
 
 def maybe_reset(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:

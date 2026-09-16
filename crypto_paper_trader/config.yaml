@@ -1,5 +1,5 @@
 name: "Crypto Paper Trader"
-version: "1.4.1"
+version: "1.5.0"
 slug: "crypto_paper_trader"
 description: "Simulation d'achat/vente BTC/ETH en continu, capital fictif, frais type Kraken"
 url: "https://github.com/adrienl82/crypto-signals"
@@ -42,6 +42,7 @@ options:
   w_trend: 0.8
   w_volume: 0.5
   w_sentiment: 0.4
+  w_news_sentiment: 0.4
   sentiment_model_path: "/share/crypto-llm/crypto-sentiment-qwen2.5-1.5b-q4_k_m.gguf"
   cryptopanic_token: ""
   ha_base_url: ""
@@ -77,6 +78,7 @@ schema:
   w_trend: float
   w_volume: float
   w_sentiment: float
+  w_news_sentiment: float
   sentiment_model_path: str?
   cryptopanic_token: str?
   ha_base_url: str?

@@ -2,3 +2,4 @@ ccxt>=4.3
 pandas>=2.0
 requests>=2.31
 feedparser>=6.0
+llama-cpp-python>=0.3

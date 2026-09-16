@@ -104,6 +104,7 @@ def compute_all(df: pd.DataFrame, fast: int = 5, slow: int = 10, rsi_period: int
 
 DEFAULT_WEIGHTS = {
     "rsi": 1.0, "macd": 1.0, "bollinger": 0.7, "trend": 0.8, "volume": 0.5, "sentiment": 0.4,
+    "news_sentiment": 0.4,
 }
 
 
@@ -180,6 +181,7 @@ def score_market(
     atr_stop_mult: float = 1.5,
     atr_target_mult: float = 3.0,
     fear_greed_value: float | None = None,
+    news_sentiment_score: float | None = None,
 ) -> dict:
     """Combine RSI, MACD, Bollinger, ADX (force de tendance), volume et,
     optionnellement, l'indice Fear & Greed (sentiment global du marche, en
@@ -190,6 +192,10 @@ def score_market(
     fear_greed_value : valeur 0..100 de l'indice Fear & Greed du jour (meme
     valeur pour tous les actifs, c'est un contexte marche global) ou None
     pour l'exclure du calcul (ex: API indisponible).
+    news_sentiment_score : moyenne -1..+1 du sentiment des dernieres news
+    propres a cet actif (cf. news_sentiment_model.py), ou None si le modele
+    est indisponible ou qu'aucune news recente n'a ete classifiee -- distinct
+    du Fear & Greed qui est un contexte marche global, pas par actif.
     Retourne : action, score, confidence, breakdown par indicateur, et stop/target
     suggérés à partir de l'ATR courant (utile en info même si non utilisé pour trader).
     """
@@ -212,6 +218,12 @@ def score_market(
     sentiment_score = _score_sentiment(fear_greed_value)
     if sentiment_score is not None:
         parts["sentiment"] = (sentiment_score, weights.get("sentiment", DEFAULT_WEIGHTS["sentiment"]))
+
+    if news_sentiment_score is not None:
+        parts["news_sentiment"] = (
+            news_sentiment_score,
+            weights.get("news_sentiment", DEFAULT_WEIGHTS["news_sentiment"]),
+        )
 
     total_w = sum(w for _, w in parts.values())
     score = sum(s * w for s, w in parts.values()) / total_w if total_w else 0.0
