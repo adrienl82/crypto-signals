@@ -1,5 +1,5 @@
 name: "Crypto Paper Trader"
-version: "1.5.1"
+version: "1.5.2"
 slug: "crypto_paper_trader"
 description: "Simulation d'achat/vente BTC/ETH en continu, capital fictif, frais type Kraken"
 url: "https://github.com/adrienl82/crypto-signals"

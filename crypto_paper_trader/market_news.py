@@ -26,9 +26,20 @@ RSS_FEEDS = {
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "The Block": "https://www.theblock.co/rss.xml",
     "Decrypt": "https://decrypt.co/feed",
-    "CryptoSlate": "https://cryptoslate.com/feed/",
+    "Bitcoinist": "https://bitcoinist.com/feed/",
     "NewsBTC": "https://www.newsbtc.com/feed/",
-    "U.Today": "https://u.today/rss",
+    "U.Today": "https://u.today/rss.php",
+    "Bitcoin.com": "https://news.bitcoin.com/feed/",
+    "AMBCrypto": "https://ambcrypto.com/feed/",
+    "CryptoNews": "https://cryptonews.com/news/feed/",
+    "BeInCrypto": "https://beincrypto.com/feed/",
+    "The Defiant": "https://thedefiant.io/api/feed",
+    "Protos": "https://protos.com/feed/",
+    "Watcher.Guru": "https://watcher.guru/news/feed",
+    "The Daily Hodl": "https://dailyhodl.com/feed/",
+    # CryptoSlate, CryptoBriefing et CryptoPotato exclus : proteges par un
+    # challenge Cloudflare (403 constant ou page de challenge JS servie en
+    # HTTP 200 par intermittence, ce qui casse le parsing XML).
 }
 
 # mots-cles de reconnaissance par entity_key (en minuscules, matches sur titre+resume)

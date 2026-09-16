@@ -3,6 +3,17 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.5.2 - 2026-09-16
+
+### Modifié
+- Flux RSS élargis : remplacement de `CryptoSlate` (bloqué par un challenge
+  Cloudflare, HTTP 403 constant) par Bitcoinist, et ajout de 8 nouvelles
+  sources (Bitcoin.com, AMBCrypto, CryptoNews, BeInCrypto, The Defiant,
+  Protos, Watcher.Guru, The Daily Hodl) pour une meilleure couverture des
+  news par actif.
+- URL U.Today corrigée (`/rss` → `/rss.php`, l'ancienne faisait une
+  redirection 301).
+
 ## 1.5.1 - 2026-09-16
 
 ### Corrigé
