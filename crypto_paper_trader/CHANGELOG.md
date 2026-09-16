@@ -3,6 +3,14 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.5.1 - 2026-09-16
+
+### Corrigé
+- Build Docker : ajout de `linux-headers` (fournit `linux/limits.h`, absent
+  de la libc musl) requis par la compilation de `llama-cpp-python` depuis
+  les sources sur Alpine/aarch64. Sans ce paquet, le build échouait avec
+  `fatal error: linux/limits.h: No such file or directory`.
+
 ## 1.5.0 - 2026-09-16
 
 ### Ajouté
