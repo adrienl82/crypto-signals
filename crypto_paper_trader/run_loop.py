@@ -15,6 +15,7 @@ from pathlib import Path
 import ccxt
 import pandas as pd
 
+import backtest_core
 from ha_client import HomeAssistantClient
 from indicators import DEFAULT_WEIGHTS, compute_all, score_market
 from market_news import ASSET_KEYWORDS, fetch_cryptopanic_news, fetch_rss_news
@@ -320,7 +321,46 @@ def maybe_reset(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
     return state
 
 
-CONTROL_POLL_SECONDS = 10  # frequence de verification du helper de reset, independante du cycle de trading
+BACKTEST_HELPER = "input_boolean.run_crypto_backtest"
+
+
+def maybe_run_backtest(opts: dict, ha: HomeAssistantClient) -> None:
+    """Si le helper HA input_boolean.run_crypto_backtest est active, lance un
+    backtest sur donnees Kraken reelles pour les actifs suivis (meme logique
+    que backtest.py a la racine du repo, mais sur la config live et avec
+    l'acces reseau du Pi -- voir backtest_core.py). Bloquant (1-3 min) et
+    rare : declenche a la main depuis HA, pas a chaque cycle. Le resultat est
+    pousse dans sensor.paper_backtest_summary (resume) et les courbes/trades
+    complets sont ecrits dans /share/crypto-backtest/ (consultable via
+    l'add-on Samba/File editor)."""
+    if ha.get_state(BACKTEST_HELPER) != "on":
+        return
+    log.info("Backtest demande via input_boolean -> lancement (ca peut prendre 1-3 minutes)")
+    ha.set_state("sensor.paper_backtest_status", state="running", attributes={
+        "friendly_name": "Backtest simulation - statut",
+    })
+    try:
+        days = int(opts.get("backtest_days", 365))
+        result = backtest_core.run_backtest(opts, days=days, use_fng=True)
+        ha.set_state("sensor.paper_backtest_summary", state="ok", attributes={
+            "friendly_name": "Backtest simulation - resultats",
+            **result,
+        })
+        ha.set_state("sensor.paper_backtest_status", state="done", attributes={
+            "friendly_name": "Backtest simulation - statut",
+            "finished_at": result["generated_at"],
+        })
+        log.info("Backtest termine: %s", result["strategies"])
+    except Exception:
+        log.exception("Echec du backtest")
+        ha.set_state("sensor.paper_backtest_status", state="error", attributes={
+            "friendly_name": "Backtest simulation - statut",
+        })
+    finally:
+        ha.call_service("input_boolean", "turn_off", {"entity_id": BACKTEST_HELPER})
+
+
+CONTROL_POLL_SECONDS = 10  # frequence de verification des helpers (reset, backtest), independante du cycle de trading
 NEWS_POLL_SECONDS = 20 * 60  # rythme du rafraichissement des news, independant du cycle de trading
 
 
@@ -347,6 +387,11 @@ def main() -> None:
         if state is not state_before:
             save_state(STATE_PATH, state)
             log.info("Portefeuille reinitialise via input_boolean, sans attendre le prochain cycle")
+
+        try:
+            maybe_run_backtest(opts, ha)
+        except Exception:
+            log.exception("Echec inattendu du declenchement de backtest")
 
         now = time.time()
 

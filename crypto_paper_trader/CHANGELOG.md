@@ -3,6 +3,27 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.6.0 - 2026-09-30
+
+### Ajouté
+- Backtest embarqué sur données Kraken réelles, déclenchable depuis Home
+  Assistant via le helper `input_boolean.run_crypto_backtest` (même principe
+  que le reset de portefeuille) : compare la stratégie actuellement déployée
+  (RSI + croisement SMA), le moteur de score multi-indicateurs
+  (`use_score_engine=true`) et un buy & hold de référence, sur les actifs
+  suivis (`symbols`) et la config live (poids/seuils/frais). Résumé poussé
+  dans `sensor.paper_backtest_summary` / `sensor.paper_backtest_status`,
+  courbes d'équity et journaux de trades complets écrits dans
+  `/share/crypto-backtest/`. Nouvelle option `backtest_days` (défaut 365).
+  Complète `backtest.py` (racine du repo), pensé pour un lancement manuel
+  sur PC avec export graphique.
+
+### Notes
+- L'indicateur `news_sentiment` (LLM local sur les titres RSS/CryptoPanic)
+  n'est pas backtestable : aucune archive historique des titres passés
+  n'existe. Le backtest utilise donc RSI/MACD/Bollinger/tendance/volume et,
+  si disponible, l'historique Fear & Greed -- pas le 7e indicateur.
+
 ## 1.5.2 - 2026-09-16
 
 ### Modifié
