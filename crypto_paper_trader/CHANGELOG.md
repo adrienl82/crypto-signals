@@ -3,6 +3,18 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.6.2 - 2026-10-02
+
+### Corrigé
+- Prix de revient (`entry_price`) écrasé au lieu d'être moyenné lors d'un
+  rachat sur une position déjà ouverte (le score engine peut racheter un
+  actif plusieurs cycles de suite tant que le score reste au-dessus du
+  seuil, observé en conditions réelles : 4 achats ETH en 4 minutes). Avant
+  le fix, `entry_price` ne reflétait que le dernier achat partiel, ce qui
+  faussait le déclenchement du stop-loss/take-profit et le `pnl_pct`
+  affiché à la revente. Corrigé dans `run_loop.py`, `backtest_core.py` et
+  `backtest.py` (moyenne pondérée qté × prix à chaque achat supplémentaire).
+
 ## 1.6.1 - 2026-10-02
 
 ### Modifié

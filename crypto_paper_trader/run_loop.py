@@ -182,8 +182,18 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
                 trade_fee = invest_amount * fee
                 qty = (invest_amount - trade_fee) / price
                 state["cash"] -= invest_amount
+                # Moyenne ponderee du prix de revient si on ajoute a une position
+                # existante (le score engine peut racheter plusieurs fois de suite
+                # tant que le score reste au-dessus du seuil) -- sinon le stop-loss/
+                # take-profit et le pnl_pct affiche a la revente se basent a tort
+                # uniquement sur le dernier achat, pas sur le vrai cout moyen.
+                if pos["qty"] > 0 and pos["entry_price"] is not None:
+                    pos["entry_price"] = (
+                        pos["qty"] * pos["entry_price"] + qty * price
+                    ) / (pos["qty"] + qty)
+                else:
+                    pos["entry_price"] = price
                 pos["qty"] += qty
-                pos["entry_price"] = price
                 pos["invested"] += invest_amount
                 record_trade(state, asset=key, symbol=symbol, action="BUY",
                               price=round(price, 2), qty=round(qty, 8),

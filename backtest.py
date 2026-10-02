@@ -267,8 +267,15 @@ def run_strategy(mode: str, assets: dict[str, dict], calendar: pd.DatetimeIndex,
                     trade_fee = invest_amount * fee
                     qty = (invest_amount - trade_fee) / price
                     sim.cash -= invest_amount
+                    # Moyenne ponderee du prix de revient si on ajoute a une
+                    # position existante (meme fix que run_cycle() dans run_loop.py).
+                    if pos["qty"] > 0 and pos["entry_price"] is not None:
+                        pos["entry_price"] = (
+                            pos["qty"] * pos["entry_price"] + qty * price
+                        ) / (pos["qty"] + qty)
+                    else:
+                        pos["entry_price"] = price
                     pos["qty"] += qty
-                    pos["entry_price"] = price
                     sim.record(t, key, "BUY", price, qty, trade_fee, None, buy_reason)
 
         sim.equity.append((t, sim.value(prices)))
