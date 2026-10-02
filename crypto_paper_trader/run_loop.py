@@ -7,9 +7,11 @@ type Kraken. Aucun ordre reel n'est jamais passe -- portefeuille virtuel.
 """
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import ccxt
@@ -28,6 +30,48 @@ log = logging.getLogger("crypto-paper-trader")
 
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/portfolio.json")
+
+# Journal de TOUTES les decisions (y compris les "hold"), un cycle = une ligne
+# par actif -- contrairement a l'historique des trades (qui ne garde que les
+# BUY/SELL executes), ce journal permet apres plusieurs jours d'analyser ce
+# que le moteur a vu a chaque instant (score, breakdown par indicateur) et de
+# confronter ca a l'evolution reelle du prix ensuite, pour affiner les poids/
+# seuils en connaissance de cause plutot qu'a l'intuition.
+DECISIONS_LOG_PATH = Path("/share/crypto-paper-trader/decisions.csv")
+DECISIONS_LOG_FIELDS = [
+    "timestamp", "asset", "symbol", "price", "mode",
+    "buy_signal", "sell_signal_core", "score", "confidence", "breakdown",
+    "action", "reason",
+]
+
+
+def log_decision(use_score_engine: bool, key: str, symbol: str, price: float,
+                  buy_signal: bool, sell_signal_core: bool, score_result: dict | None,
+                  action: str, reason: str | None) -> None:
+    row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "asset": key,
+        "symbol": symbol,
+        "price": price,
+        "mode": "score" if use_score_engine else "legacy",
+        "buy_signal": buy_signal,
+        "sell_signal_core": sell_signal_core,
+        "score": score_result["score"] if score_result else None,
+        "confidence": score_result["confidence"] if score_result else None,
+        "breakdown": json.dumps(score_result["breakdown"]) if score_result else None,
+        "action": action,
+        "reason": reason,
+    }
+    try:
+        DECISIONS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        is_new = not DECISIONS_LOG_PATH.exists()
+        with open(DECISIONS_LOG_PATH, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=DECISIONS_LOG_FIELDS)
+            if is_new:
+                writer.writeheader()
+            writer.writerow(row)
+    except Exception:
+        log.exception("Echec de l'ecriture du journal de decisions")
 
 
 def load_options() -> dict:
@@ -168,6 +212,8 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
                               price=round(price, 2), qty=round(pos["qty"], 8),
                               fee=round(trade_fee, 2), pnl_pct=round(pnl_pct * 100, 2), reason=reason)
                 state["positions"][key] = {"qty": 0.0, "entry_price": None, "invested": 0.0}
+                log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
+                             score_result, "SELL", reason)
                 continue
 
         # --- Entree ---
@@ -198,6 +244,14 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
                 record_trade(state, asset=key, symbol=symbol, action="BUY",
                               price=round(price, 2), qty=round(qty, 8),
                               fee=round(trade_fee, 2), pnl_pct=None, reason=buy_reason)
+                log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
+                             score_result, "BUY", buy_reason)
+            else:
+                log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
+                             score_result, "HOLD", "signal buy mais montant < 10")
+        else:
+            log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
+                         score_result, "HOLD", None)
 
     total_after = portfolio_value(state, prices)
     push_to_ha(ha, opts, state, prices, total_after, scores, sentiment)

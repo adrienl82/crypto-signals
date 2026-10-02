@@ -3,6 +3,19 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.7.0 - 2026-10-02
+
+### Ajouté
+- Journal complet des décisions : chaque cycle écrit désormais une ligne par
+  actif dans `/share/crypto-paper-trader/decisions.csv` -- y compris les
+  "hold", contrairement à l'historique des trades qui ne garde que les
+  BUY/SELL exécutés. Colonnes : timestamp, actif, prix, mode (legacy/score),
+  signaux bruts, score, confiance, breakdown par indicateur (JSON), action
+  effective et raison. Objectif : après plusieurs jours d'observation,
+  pouvoir confronter ce que le moteur a vu à chaque instant (pas seulement
+  les trades passés) à l'évolution réelle du prix ensuite, pour affiner les
+  poids/seuils sur des données plutôt qu'à l'intuition.
+
 ## 1.6.2 - 2026-10-02
 
 ### Corrigé
