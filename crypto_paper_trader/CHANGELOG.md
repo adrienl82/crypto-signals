@@ -3,6 +3,15 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.6.1 - 2026-10-02
+
+### Modifié
+- `interval_minutes` accepte désormais des valeurs de 1 à 1440 (au lieu de
+  5 à 1440), pour permettre un cycle de trading jusqu'à chaque minute --
+  utile pour observer le comportement du score engine sur un timeframe très
+  court (`timeframe: "1m"`) en mode test/observation. Le plancher reel de
+  60s dans run_loop.py (`max(60, interval_minutes*60)`) n'a pas changé.
+
 ## 1.6.0 - 2026-09-30
 
 ### Ajouté
