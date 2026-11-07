@@ -111,6 +111,33 @@ def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 60) 
     return df
 
 
+def liquidate_removed_assets(opts: dict, state: dict, prices: dict, fee: float) -> None:
+    """Vend les positions d'actifs retires de `symbols`. Sans ca, la position
+    n'est plus jamais vendue et compte pour 0 dans la valeur du portefeuille
+    (prix plus recupere). Le symbole est retrouve dans l'historique des
+    trades, a defaut <ACTIF>/<devise du premier symbole configure>."""
+    configured = {s["entity_key"] for s in opts["symbols"]}
+    quote = opts["symbols"][0]["symbol"].split("/")[1] if opts["symbols"] else "EUR"
+    for key in [k for k, p in state["positions"].items() if k not in configured and p["qty"] > 0]:
+        pos = state["positions"][key]
+        symbol = next((t["symbol"] for t in reversed(state["trades"]) if t.get("asset") == key and t.get("symbol")),
+                      f"{key.upper()}/{quote}")
+        try:
+            price = float(fetch_ohlcv(opts["exchange"], symbol, opts["timeframe"], limit=5).iloc[-1]["close"])
+        except Exception:
+            log.exception("Prix introuvable pour %s (actif retire de la config), position non vendue", symbol)
+            continue
+        proceeds = pos["qty"] * price
+        trade_fee = proceeds * fee
+        state["cash"] += proceeds - trade_fee
+        pnl_pct = (price - pos["entry_price"]) / pos["entry_price"] * 100 if pos.get("entry_price") else None
+        record_trade(state, asset=key, symbol=symbol, action="SELL", price=round(price, 6),
+                     qty=round(pos["qty"], 8), fee=round(trade_fee, 2),
+                     pnl_pct=round(pnl_pct, 2) if pnl_pct is not None else None,
+                     reason="actif retire de la config")
+        del state["positions"][key]
+
+
 def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
     rsi_buy, rsi_sell = opts["rsi_buy"], opts["rsi_sell"]
     use_score_engine = opts.get("use_score_engine", False)
@@ -177,6 +204,7 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
         except Exception:
             log.exception("Calcul du score impossible pour %s", symbol)
 
+    liquidate_removed_assets(opts, state, prices, cfg["fee_pct"] / 100)
     total_before = portfolio_value(state, prices)
 
     for symbol_cfg in opts["symbols"]:

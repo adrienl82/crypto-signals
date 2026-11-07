@@ -3,6 +3,14 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.8.1 - 2026-11-08
+
+### Corrigé
+- Une position sur un actif retiré de `symbols` n'était plus jamais vendue
+  et comptait pour 0 dans la valeur du portefeuille (observé en retirant
+  MOVR : performance affichée à -50 % au lieu de -30 %). Elle est
+  maintenant vendue au cycle suivant, raison « actif retire de la config ».
+
 ## 1.8.0 - 2026-11-07
 
 ### Contexte
