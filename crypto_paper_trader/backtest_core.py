@@ -27,14 +27,15 @@ import numpy as np
 import pandas as pd
 import requests
 
-from indicators import compute_all, score_market
+from indicators import DEFAULT_WEIGHTS, compute_all
+from strategy import DEFAULTS, add_trend_column, apply_step, compute_signals, empty_position
 
 log = logging.getLogger("crypto-paper-trader")
 
 OUTDIR = Path("/share/crypto-backtest")
 
 
-def fetch_history(exchange, symbol: str, timeframe: str, since_ms: int, limit: int = 720) -> pd.DataFrame:
+def fetch_history(exchange, symbol: str, timeframe: str, since_ms: int, limit: int = 1000) -> pd.DataFrame:
     tf_ms = exchange.parse_timeframe(timeframe) * 1000
     now_ms = exchange.milliseconds()
     since = since_ms
@@ -49,8 +50,6 @@ def fetch_history(exchange, symbol: str, timeframe: str, since_ms: int, limit: i
             break
         since = last_ts + tf_ms
         time.sleep(exchange.rateLimit / 1000)
-        if len(batch) < limit:
-            break
     if not rows:
         raise RuntimeError(f"Aucune donnee recuperee pour {symbol}")
     df = (
@@ -63,6 +62,45 @@ def fetch_history(exchange, symbol: str, timeframe: str, since_ms: int, limit: i
     if len(df) and df.iloc[-1]["ts"] + tf_ms > exchange.milliseconds():
         df = df.iloc[:-1].reset_index(drop=True)
     return df
+
+
+def load_history(opts: dict, symbol: str, timeframe: str, since_ms: int) -> tuple[pd.DataFrame, str]:
+    """Historique de bougies pour le backtest.
+
+    L'API OHLC de Kraken ne renvoie que les 720 dernieres bougies quel que
+    soit `since` (30 jours en 1h, 120 jours en 4h) : un backtest "365 jours"
+    sur Kraken en 1h ne couvrait donc en realite qu'un mois. On prend
+    l'historique sur `history_exchange` (Binance par defaut, historique
+    complet pagine) ; si la paire EUR n'y existe pas, on essaie la paire USDT
+    du meme actif (rendements quasi identiques, a la variation EUR/USD pres),
+    sinon on retombe sur l'exchange de trading, avec un avertissement si la
+    periode obtenue est plus courte que demandee."""
+    base, quote = symbol.split("/")
+    hist_id = opts.get("history_exchange") or "binance"
+    candidates = [(hist_id, symbol)]
+    if quote != "USDT":
+        candidates.append((hist_id, f"{base}/USDT"))
+    candidates.append((opts["exchange"], symbol))
+
+    last_exc: Exception | None = None
+    for ex_id, sym in candidates:
+        try:
+            exchange = getattr(ccxt, ex_id)({"enableRateLimit": True})
+            if sym not in exchange.load_markets():
+                continue
+            df = fetch_history(exchange, sym, timeframe, since_ms)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            log.warning("Historique %s indisponible sur %s (%s)", sym, ex_id, exc)
+            continue
+        source = f"{ex_id}:{sym}"
+        covered_days = (df["ts"].iloc[-1] - df["ts"].iloc[0]) / 86_400_000
+        wanted_days = (exchange.milliseconds() - since_ms) / 86_400_000
+        if covered_days < wanted_days * 0.9:
+            log.warning("Backtest %s : seulement %.0f jours d'historique sur %.0f demandes (source %s)",
+                        symbol, covered_days, wanted_days, source)
+        return df, source
+    raise RuntimeError(f"Aucun historique trouve pour {symbol}") from last_exc
 
 
 def fetch_fng_history() -> pd.Series | None:
@@ -94,7 +132,7 @@ class Sim:
     def __init__(self, initial_capital: float, keys: list[str]):
         self.cash = initial_capital
         self.initial_capital = initial_capital
-        self.positions = {k: {"qty": 0.0, "entry_price": None} for k in keys}
+        self.positions = {k: empty_position() for k in keys}
         self.trades: list[dict] = []
         self.equity: list[tuple] = []
 
@@ -110,27 +148,19 @@ class Sim:
 
 
 def run_strategy(mode: str, cfg: dict, assets: dict, calendar, initial_capital: float,
-                  fng_series: pd.Series | None) -> Sim:
+                  fng_series: pd.Series | None, tf_ms: int) -> Sim:
+    """Rejoue la strategie bougie par bougie avec les memes regles que le live
+    (strategy.apply_step). mode = "score" (score engine) ou "legacy"."""
     keys = list(assets.keys())
     sim = Sim(initial_capital, keys)
-    fee = cfg["fee_pct"] / 100
-    max_exposure_pct = cfg["max_exposure_per_asset_pct"] / 100
-    stop_loss = cfg["stop_loss_pct"] / 100
-    take_profit = cfg["take_profit_pct"] / 100
-    weights = {
-        "rsi": cfg["w_rsi"], "macd": cfg["w_macd"], "bollinger": cfg["w_bollinger"],
-        "trend": cfg["w_trend"], "volume": cfg["w_volume"], "sentiment": cfg["w_sentiment"],
-    }
+    book = {"cash": sim.cash, "positions": sim.positions}
     last_price: dict[str, float] = {}
 
     for t in calendar:
-        prices = dict(last_price)
         for key in keys:
-            info = assets[key]
-            i = info["idx_by_date"].get(t)
+            i = assets[key]["idx_by_date"].get(t)
             if i is not None:
-                prices[key] = float(info["df"].iloc[i]["close"])
-        last_price.update(prices)
+                last_price[key] = float(assets[key]["df"].iloc[i]["close"])
 
         for key in keys:
             info = assets[key]
@@ -138,68 +168,17 @@ def run_strategy(mode: str, cfg: dict, assets: dict, calendar, initial_capital: 
             if i is None or i < 1:
                 continue
             df = info["df"]
-            last, prev = df.iloc[i], df.iloc[i - 1]
-            if pd.isna(last.get("rsi")) or pd.isna(prev.get("rsi")):
+            if pd.isna(df.iloc[i].get("rsi")) or pd.isna(df.iloc[i - 1].get("rsi")):
                 continue
-            price = float(last["close"])
-            pos = sim.positions[key]
+            signals = compute_signals(mode == "score", df.iloc[i - 1: i + 1], cfg,
+                                      fear_greed_value=fng_at(fng_series, t))
+            ts = int(df.iloc[i]["ts"])
+            apply_step(book, key, last_price[key], ts, tf_ms, signals, cfg, last_price,
+                       lambda action, price, qty, fee, pnl, reason, key=key:
+                       sim.record(t, key, action, price, qty, fee, pnl, reason))
 
-            if mode == "score":
-                fgv = fng_at(fng_series, t)
-                score_result = score_market(
-                    df.iloc[: i + 1], rsi_buy=cfg["rsi_buy"], rsi_sell=cfg["rsi_sell"],
-                    weights=weights, buy_threshold=cfg["score_buy_threshold"],
-                    sell_threshold=cfg["score_sell_threshold"],
-                    atr_stop_mult=cfg["atr_stop_mult"], atr_target_mult=cfg["atr_target_mult"],
-                    fear_greed_value=fgv, news_sentiment_score=None,
-                )
-                buy_signal = score_result["action"] == "buy"
-                sell_signal_core = score_result["action"] == "sell"
-                buy_reason = f"score {score_result['score']:+.2f}"
-                sell_reason = f"score {score_result['score']:+.2f}"
-            else:
-                bullish_cross = prev["sma_fast"] <= prev["sma_slow"] and last["sma_fast"] > last["sma_slow"]
-                bearish_cross = prev["sma_fast"] >= prev["sma_slow"] and last["sma_fast"] < last["sma_slow"]
-                buy_signal = last["rsi"] < cfg["rsi_buy"] or bullish_cross
-                sell_signal_core = last["rsi"] > cfg["rsi_sell"] or bearish_cross
-                buy_reason = "RSI survente" if last["rsi"] < cfg["rsi_buy"] else "croisement haussier"
-                sell_reason = "RSI surachat" if last["rsi"] > cfg["rsi_sell"] else "croisement baissier"
-
-            if pos["qty"] > 0:
-                pnl_pct = (price - pos["entry_price"]) / pos["entry_price"]
-                stop_hit = pnl_pct <= stop_loss
-                tp_hit = pnl_pct >= take_profit
-                if sell_signal_core or stop_hit or tp_hit:
-                    proceeds = pos["qty"] * price
-                    trade_fee = proceeds * fee
-                    sim.cash += proceeds - trade_fee
-                    reason = "stop-loss" if stop_hit else "take-profit" if tp_hit else sell_reason
-                    sim.record(t, key, "SELL", price, pos["qty"], trade_fee, pnl_pct * 100, reason)
-                    sim.positions[key] = {"qty": 0.0, "entry_price": None}
-                    continue
-
-            total_now = sim.value(prices)
-            current_exposure = pos["qty"] * price
-            max_allowed = total_now * max_exposure_pct
-            room = max_allowed - current_exposure
-            if buy_signal and room > 10 and sim.cash > 10:
-                invest_amount = min(room, sim.cash * 0.5)
-                if invest_amount > 10:
-                    trade_fee = invest_amount * fee
-                    qty = (invest_amount - trade_fee) / price
-                    sim.cash -= invest_amount
-                    # Moyenne ponderee du prix de revient si on ajoute a une
-                    # position existante (meme fix que run_cycle() dans run_loop.py).
-                    if pos["qty"] > 0 and pos["entry_price"] is not None:
-                        pos["entry_price"] = (
-                            pos["qty"] * pos["entry_price"] + qty * price
-                        ) / (pos["qty"] + qty)
-                    else:
-                        pos["entry_price"] = price
-                    pos["qty"] += qty
-                    sim.record(t, key, "BUY", price, qty, trade_fee, None, buy_reason)
-
-        sim.equity.append((t, sim.value(prices)))
+        sim.cash = book["cash"]
+        sim.equity.append((t, sim.value(last_price)))
 
     return sim
 
@@ -231,15 +210,15 @@ def run_buy_and_hold(cfg: dict, assets: dict, calendar, initial_capital: float) 
     return sim
 
 
-def metrics(sim: Sim) -> dict:
+def metrics(sim: Sim, bars_per_year: float) -> dict:
     eq = pd.Series({d: v for d, v in sim.equity}).sort_index()
     total_return = eq.iloc[-1] / eq.iloc[0] - 1
     running_max = eq.cummax()
     drawdown = eq / running_max - 1
     max_dd = drawdown.min()
-    hourly_returns = eq.pct_change().dropna()
-    std = hourly_returns.std()
-    sharpe = (hourly_returns.mean() / std * np.sqrt(24 * 365)) if std and not pd.isna(std) else float("nan")
+    bar_returns = eq.pct_change().dropna()
+    std = bar_returns.std()
+    sharpe = (bar_returns.mean() / std * np.sqrt(bars_per_year)) if std and not pd.isna(std) else float("nan")
     sells = [tr for tr in sim.trades if tr["action"] == "SELL"]
     wins = [tr for tr in sells if tr["pnl_pct"] and tr["pnl_pct"] > 0]
     win_rate = len(wins) / len(sells) * 100 if sells else float("nan")
@@ -262,10 +241,14 @@ def metrics(sim: Sim) -> dict:
 
 
 def build_cfg(opts: dict) -> dict:
-    from indicators import DEFAULT_WEIGHTS
     return dict(
         fee_pct=opts["fee_pct"],
         max_exposure_per_asset_pct=opts["max_exposure_per_asset_pct"],
+        max_total_exposure_pct=opts.get("max_total_exposure_pct", DEFAULTS["max_total_exposure_pct"]),
+        min_hold_bars=opts.get("min_hold_bars", DEFAULTS["min_hold_bars"]),
+        cooldown_bars=opts.get("cooldown_bars", DEFAULTS["cooldown_bars"]),
+        allow_pyramiding=opts.get("allow_pyramiding", DEFAULTS["allow_pyramiding"]),
+        trend_filter_days=opts.get("trend_filter_days", DEFAULTS["trend_filter_days"]),
         rsi_buy=opts["rsi_buy"], rsi_sell=opts["rsi_sell"],
         stop_loss_pct=opts["stop_loss_pct"], take_profit_pct=opts["take_profit_pct"],
         score_buy_threshold=opts.get("score_buy_threshold", 0.35),
@@ -276,39 +259,52 @@ def build_cfg(opts: dict) -> dict:
         w_trend=opts.get("w_trend", DEFAULT_WEIGHTS["trend"]),
         w_volume=opts.get("w_volume", DEFAULT_WEIGHTS["volume"]),
         w_sentiment=opts.get("w_sentiment", DEFAULT_WEIGHTS["sentiment"]),
+        w_news_sentiment=opts.get("w_news_sentiment", DEFAULT_WEIGHTS["news_sentiment"]),
         sma_fast=opts["sma_fast"], sma_slow=opts["sma_slow"], rsi_period=opts["rsi_period"],
     )
 
 
-def run_backtest(opts: dict, days: int = 365, use_fng: bool = True) -> dict:
-    """Backteste la config live (opts) sur des donnees Kraken reelles, pour
-    les actifs actuellement suivis (opts['symbols']). Bloquant (peut prendre
-    1-3 minutes selon le nombre d'actifs/jours) -- a lancer via le helper HA
-    dedie, pas a chaque cycle. Retourne un resume JSON-serialisable (pas les
-    trades complets, trop volumineux pour un attribut HA) et ecrit les
-    courbes d'equity + journaux de trades complets dans /share/crypto-backtest/."""
+def load_assets(opts: dict, days: int) -> tuple[dict, dict[str, str], int]:
+    """Telecharge l'historique de chaque actif suivi et calcule les indicateurs.
+    Retourne (assets, source par actif, duree d'une bougie en ms)."""
     cfg = build_cfg(opts)
-    keys = [s["entity_key"] for s in opts["symbols"]]
-    exchange = getattr(ccxt, opts["exchange"])({"enableRateLimit": True})
-    since_ms = exchange.milliseconds() - days * 24 * 3600 * 1000
-
-    assets = {}
+    timeframe = opts["timeframe"]
+    tf_ms = ccxt.Exchange.parse_timeframe(timeframe) * 1000
+    since_ms = int(time.time() * 1000) - days * 24 * 3600 * 1000
+    assets, sources = {}, {}
     for symbol_cfg in opts["symbols"]:
         key, symbol = symbol_cfg["entity_key"], symbol_cfg["symbol"]
-        raw = fetch_history(exchange, symbol, opts["timeframe"], since_ms)
+        raw, sources[key] = load_history(opts, symbol, timeframe, since_ms)
         df = compute_all(raw, fast=cfg["sma_fast"], slow=cfg["sma_slow"], rsi_period=cfg["rsi_period"])
-        assets[key] = {"df": df, "idx_by_date": {d: i for i, d in enumerate(df["date"])}}
+        df = add_trend_column(df, cfg, tf_ms)
+        assets[key] ={"df": df, "idx_by_date": {d: i for i, d in enumerate(df["date"])}}
+    return assets, sources, tf_ms
 
-    fng_series = fetch_fng_history() if use_fng else None
 
+def make_calendar(assets: dict) -> pd.DatetimeIndex:
     from functools import reduce
-    calendar = reduce(
+    return reduce(
         lambda a, b: a.union(b), (pd.DatetimeIndex(a["df"]["date"]) for a in assets.values())
     ).sort_values()
 
+
+def run_backtest(opts: dict, days: int = 365, use_fng: bool = True) -> dict:
+    """Backteste la config live (opts) sur des donnees reelles, pour les
+    actifs actuellement suivis (opts['symbols']), avec les memes regles que
+    le live (strategy.py). Bloquant (quelques minutes selon le nombre
+    d'actifs/jours) -- a lancer via le helper HA dedie, pas a chaque cycle.
+    Retourne un resume JSON-serialisable et ecrit les courbes d'equity +
+    journaux de trades complets dans /share/crypto-backtest/."""
+    cfg = build_cfg(opts)
+    keys = [s["entity_key"] for s in opts["symbols"]]
+    assets, sources, tf_ms = load_assets(opts, days)
+    fng_series = fetch_fng_history() if use_fng else None
+    calendar = make_calendar(assets)
+    bars_per_year = 365 * 86_400_000 / tf_ms
+
     initial_capital = opts["initial_capital"]
-    sim_legacy = run_strategy("legacy", cfg, assets, calendar, initial_capital, fng_series)
-    sim_score = run_strategy("score", cfg, assets, calendar, initial_capital, fng_series)
+    sim_legacy = run_strategy("legacy", cfg, assets, calendar, initial_capital, fng_series, tf_ms)
+    sim_score = run_strategy("score", cfg, assets, calendar, initial_capital, fng_series, tf_ms)
     sim_bh = run_buy_and_hold(cfg, assets, calendar, initial_capital)
 
     OUTDIR.mkdir(parents=True, exist_ok=True)
@@ -319,13 +315,16 @@ def run_backtest(opts: dict, days: int = 365, use_fng: bool = True) -> dict:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "days": days,
+        "covered_from": calendar[0].isoformat() if len(calendar) else None,
+        "covered_to": calendar[-1].isoformat() if len(calendar) else None,
         "timeframe": opts["timeframe"],
         "symbols": keys,
+        "data_sources": sources,
         "fear_greed_included": fng_series is not None,
         "news_sentiment_included": False,  # jamais backtestable, cf. docstring module
         "strategies": {
-            "legacy": metrics(sim_legacy),
-            "score": metrics(sim_score),
-            "buy_hold": metrics(sim_bh),
+            "legacy": metrics(sim_legacy, bars_per_year),
+            "score": metrics(sim_score, bars_per_year),
+            "buy_hold": metrics(sim_bh, bars_per_year),
         },
     }

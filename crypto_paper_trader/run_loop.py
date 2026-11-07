@@ -24,6 +24,7 @@ from market_news import ASSET_KEYWORDS, fetch_cryptopanic_news, fetch_rss_news
 from market_sentiment import fetch_fear_greed
 from news_sentiment_model import get_news_sentiment_score
 from portfolio import load_state, portfolio_value, record_trade, reset_state, save_state
+from strategy import add_trend_column, apply_step, compute_signals, trend_bars
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("crypto-paper-trader")
@@ -111,11 +112,7 @@ def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 60) 
 
 
 def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
-    fee = opts["fee_pct"] / 100
-    max_exposure_pct = opts["max_exposure_per_asset_pct"] / 100
     rsi_buy, rsi_sell = opts["rsi_buy"], opts["rsi_sell"]
-    stop_loss = opts["stop_loss_pct"] / 100
-    take_profit = opts["take_profit_pct"] / 100
     use_score_engine = opts.get("use_score_engine", False)
     score_weights = {
         "rsi": opts.get("w_rsi", DEFAULT_WEIGHTS["rsi"]),
@@ -137,11 +134,23 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
     frames: dict[str, pd.DataFrame] = {}
     scores: dict[str, dict] = {}
 
+    cfg = backtest_core.build_cfg(opts)
+    tf_ms = ccxt.Exchange.parse_timeframe(opts["timeframe"]) * 1000
+    # Kraken ne renvoie que 720 bougies : filtre 100 jours => timeframe 4h minimum.
+    n_trend = trend_bars(cfg, tf_ms)
+    candles_needed = max(60, n_trend + 5)
+    if candles_needed > 720:
+        log.warning("Filtre de tendance de %s jours impossible en %s (il faut %d bougies, Kraken en donne 720) : "
+                    "passe le timeframe a 4h ou reduis trend_filter_days. Aucun achat tant que c'est le cas.",
+                    cfg["trend_filter_days"], opts["timeframe"], n_trend)
+        candles_needed = 720
+
     for symbol_cfg in opts["symbols"]:
         symbol, key = symbol_cfg["symbol"], symbol_cfg["entity_key"]
         try:
-            df = fetch_ohlcv(opts["exchange"], symbol, opts["timeframe"])
+            df = fetch_ohlcv(opts["exchange"], symbol, opts["timeframe"], limit=candles_needed)
             df = compute_all(df, fast=opts["sma_fast"], slow=opts["sma_slow"], rsi_period=opts["rsi_period"])
+            df = add_trend_column(df, cfg, tf_ms)
         except Exception:
             log.exception("Fetch impossible pour %s, actif ignore ce cycle", symbol)
             continue
@@ -176,82 +185,29 @@ def run_cycle(opts: dict, state: dict, ha: HomeAssistantClient) -> dict:
         if key not in frames or len(frames[key]) < 2:
             continue
         df = frames[key]
-        last, prev = df.iloc[-1], df.iloc[-2]
         price = prices[key]
         pos = state["positions"][key]
+        candle_ts = int(df.iloc[-1]["ts"])
 
-        bullish_cross = prev["sma_fast"] <= prev["sma_slow"] and last["sma_fast"] > last["sma_slow"]
-        bearish_cross = prev["sma_fast"] >= prev["sma_slow"] and last["sma_fast"] < last["sma_slow"]
-        score_result = scores.get(key)
+        # Une seule decision par bougie cloturee : tant qu'aucune nouvelle
+        # bougie n'est sortie, les cycles suivants (ex : interval_minutes=1)
+        # ne font que rafraichir les capteurs HA. Avant ce garde-fou, le
+        # meme signal declenchait un achat a chaque minute.
+        if pos.get("last_candle_ts") == candle_ts:
+            continue
+        pos["last_candle_ts"] = candle_ts
 
-        if use_score_engine and score_result:
-            buy_signal = score_result["action"] == "buy"
-            sell_signal_core = score_result["action"] == "sell"
-            buy_reason = f"score {score_result['score']:+.2f}"
-            sell_reason = f"score {score_result['score']:+.2f}"
-        else:
-            buy_signal = last["rsi"] < rsi_buy or bullish_cross
-            sell_signal_core = last["rsi"] > rsi_sell or bearish_cross
-            buy_reason = "RSI survente" if last["rsi"] < rsi_buy else "croisement haussier"
-            sell_reason = "RSI surachat" if last["rsi"] > rsi_sell else "croisement baissier"
+        signals = compute_signals(use_score_engine and scores.get(key) is not None, df, cfg,
+                                  score_result=scores.get(key))
 
-        # --- Sortie ---
-        # Le stop-loss / take-profit en % reste actif dans tous les cas : c'est le
-        # filet de securite, meme quand le score engine pilote l'entree/sortie normale.
-        if pos["qty"] > 0:
-            pnl_pct = (price - pos["entry_price"]) / pos["entry_price"]
-            stop_hit = pnl_pct <= stop_loss
-            tp_hit = pnl_pct >= take_profit
+        def record(action, trade_price, qty, trade_fee, pnl_pct, reason, key=key, symbol=symbol):
+            record_trade(state, asset=key, symbol=symbol, action=action,
+                         price=round(trade_price, 2), qty=round(qty, 8), fee=round(trade_fee, 2),
+                         pnl_pct=round(pnl_pct, 2) if pnl_pct is not None else None, reason=reason)
 
-            if sell_signal_core or stop_hit or tp_hit:
-                proceeds = pos["qty"] * price
-                trade_fee = proceeds * fee
-                state["cash"] += proceeds - trade_fee
-                reason = "stop-loss" if stop_hit else "take-profit" if tp_hit else sell_reason
-                record_trade(state, asset=key, symbol=symbol, action="SELL",
-                              price=round(price, 2), qty=round(pos["qty"], 8),
-                              fee=round(trade_fee, 2), pnl_pct=round(pnl_pct * 100, 2), reason=reason)
-                state["positions"][key] = {"qty": 0.0, "entry_price": None, "invested": 0.0}
-                log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
-                             score_result, "SELL", reason)
-                continue
-
-        # --- Entree ---
-        total_now = portfolio_value(state, prices)
-        current_exposure = pos["qty"] * price
-        max_allowed = total_now * max_exposure_pct
-        room = max_allowed - current_exposure
-
-        if buy_signal and room > 10 and state["cash"] > 10:
-            invest_amount = min(room, state["cash"] * 0.5)
-            if invest_amount > 10:
-                trade_fee = invest_amount * fee
-                qty = (invest_amount - trade_fee) / price
-                state["cash"] -= invest_amount
-                # Moyenne ponderee du prix de revient si on ajoute a une position
-                # existante (le score engine peut racheter plusieurs fois de suite
-                # tant que le score reste au-dessus du seuil) -- sinon le stop-loss/
-                # take-profit et le pnl_pct affiche a la revente se basent a tort
-                # uniquement sur le dernier achat, pas sur le vrai cout moyen.
-                if pos["qty"] > 0 and pos["entry_price"] is not None:
-                    pos["entry_price"] = (
-                        pos["qty"] * pos["entry_price"] + qty * price
-                    ) / (pos["qty"] + qty)
-                else:
-                    pos["entry_price"] = price
-                pos["qty"] += qty
-                pos["invested"] += invest_amount
-                record_trade(state, asset=key, symbol=symbol, action="BUY",
-                              price=round(price, 2), qty=round(qty, 8),
-                              fee=round(trade_fee, 2), pnl_pct=None, reason=buy_reason)
-                log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
-                             score_result, "BUY", buy_reason)
-            else:
-                log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
-                             score_result, "HOLD", "signal buy mais montant < 10")
-        else:
-            log_decision(use_score_engine, key, symbol, price, buy_signal, sell_signal_core,
-                         score_result, "HOLD", None)
+        action, reason = apply_step(state, key, price, candle_ts, tf_ms, signals, cfg, prices, record)
+        log_decision(use_score_engine, key, symbol, price, signals["buy"], signals["sell"],
+                     scores.get(key), action, reason)
 
     total_after = portfolio_value(state, prices)
     push_to_ha(ha, opts, state, prices, total_after, scores, sentiment)

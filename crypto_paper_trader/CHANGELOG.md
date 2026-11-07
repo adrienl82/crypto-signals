@@ -3,6 +3,51 @@
 Toutes les évolutions notables de l'add-on **Crypto Paper Trader** sont
 listées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## 1.8.0 - 2026-11-07
+
+### Contexte
+Analyse du journal des décisions du 2 octobre au 7 novembre 2026 (score
+engine, seuils ±0,15, cycle d'une minute) : -30 % sur le portefeuille
+simulé, 820 trades en 36 jours. Avant frais, la stratégie était à peu près
+à l'équilibre sur BTC/ETH/XRP ; ce sont les frais (environ 60 allers-retours
+par actif à 0,52 % chacun) et la baisse du marché qui expliquent la perte.
+Le backtest sur 2 ans montre aussi que le score seul n'a pas d'avantage,
+même sans frais.
+
+### Ajouté
+- `strategy.py` : règles de trading partagées par le live et le backtest
+  (un résultat de backtest décrit désormais exactement ce que fait l'add-on).
+- Une seule décision par bougie clôturée : les cycles suivants sur la même
+  bougie ne font que rafraîchir les capteurs (avant, le même signal
+  déclenchait un achat à chaque minute).
+- Une seule entrée par position (`allow_pyramiding: false`).
+- `min_hold_bars` (défaut 4) : durée minimale de détention avant une sortie
+  sur signal ; le stop-loss et le take-profit restent toujours actifs.
+- `cooldown_bars` (défaut 2) : délai après une vente avant de racheter.
+- `max_total_exposure_pct` (défaut 100) : plafond d'exposition totale (avec
+  4 actifs à 40 % chacun, l'exposition pouvait monter à 160 %).
+- `trend_filter_days` (défaut 100, 0 = désactivé) : n'achète que si le prix
+  est au-dessus de sa moyenne sur N jours, et sort quand il passe dessous.
+  Backtest BTC/ETH/XRP en 4h, février 2025 à novembre 2026 : -8,5 % (pire
+  baisse -17 %) contre -27,5 % sans filtre et -36,5 % en buy & hold (pire
+  baisse -62 %).
+- `history_exchange` (défaut `binance`) : source de l'historique du backtest.
+
+### Corrigé
+- Le backtest embarqué ne couvrait que 30 jours en 1h malgré
+  `backtest_days: 365` : l'API OHLC de Kraken ne renvoie que les 720
+  dernières bougies. L'historique vient maintenant de Binance (paire EUR, ou
+  USDT si elle n'existe pas), avec Kraken en secours et un avertissement si
+  la période obtenue est trop courte.
+
+### Modifié
+- Valeurs par défaut : `timeframe: 4h`, `interval_minutes: 15`,
+  `use_score_engine: true`, `backtest_days: 730`. Le filtre de 100 jours
+  demande 600 bougies : impossible en 1h avec Kraken (720 bougies max), d'où
+  le passage en 4h. Ces valeurs ne s'appliquent pas aux options déjà
+  enregistrées dans Home Assistant : il faut les modifier dans l'onglet
+  Configuration de l'add-on.
+
 ## 1.7.0 - 2026-10-02
 
 ### Ajouté
